@@ -140,6 +140,43 @@ void can_stm32_tx_isr_handler(CAN_TypeDef *can, struct can_stm32_data *data)
 	}
 }
 
+static void can_stm32_isr_err(CAN_TypeDef *can, struct can_stm32_data *data)
+{
+	/* check if error management interrupts are turned on */
+	if ((can->IER & CAN_IER_ERRIE) == CAN_IER_ERRIE) {
+		enum can_state state = data->state;
+
+		if (state < CAN_STATE_BUS_OFF) {
+			if ((can->ESR & CAN_ESR_BOFF) == CAN_ESR_BOFF) {
+				state = CAN_STATE_BUS_OFF;
+			} else if ((can->ESR & CAN_ESR_EPVF) == CAN_ESR_EPVF) {
+				state = CAN_STATE_ERROR_PASSIVE;
+			} else if ((can->ESR & CAN_ESR_EWGF) == CAN_ESR_EWGF) {
+				state = CAN_STATE_ERROR_WARNING;
+			} else {
+				state = CAN_STATE_ERROR_ACTIVE;
+			}
+		}
+
+		if ((can->ESR & CAN_ESR_LEC) != 0U) {
+			/* error code, clear last error code (LEC) */
+			can->ESR |= CAN_ESR_LEC;
+		}
+		else {
+			state = CAN_STATE_ERROR_ACTIVE;
+		}
+
+		if ((data->state != state) && (data->state_cb != NULL)) {
+			data->state_cb(state, data->state_cb_arg);
+		}
+
+		data->state = state;
+
+		/* clear error interrupt */
+		can->MSR |= CAN_MSR_ERRI;
+	}
+}
+
 #ifdef CONFIG_SOC_SERIES_STM32F0X
 
 static void can_stm32_isr(void *arg)
@@ -154,9 +191,10 @@ static void can_stm32_isr(void *arg)
 	cfg = DEV_CFG(dev);
 	can = cfg->can;
 
-	can_stm32_tx_isr_handler(can, data);
 	can_stm32_rx_isr_handler(can, data);
+	can_stm32_tx_isr_handler(can, data);
 
+	can_stm32_isr_err(can, data);
 }
 
 #else
@@ -174,6 +212,7 @@ static void can_stm32_rx_isr(void *arg)
 	can = cfg->can;
 
 	can_stm32_rx_isr_handler(can, data);
+	can_stm32_isr_err(can, data);
 }
 
 static void can_stm32_tx_isr(void *arg)
@@ -189,6 +228,7 @@ static void can_stm32_tx_isr(void *arg)
 	can = cfg->can;
 
 	can_stm32_tx_isr_handler(can, data);
+	can_stm32_isr_err(can, data);
 }
 
 #endif
@@ -925,7 +965,7 @@ static void config_can_1_irq(CAN_TypeDef *can)
 	irq_enable(DT_CAN_1_IRQ_SCE);
 #endif
 	can->IER |= CAN_IER_TMEIE | CAN_IER_ERRIE | CAN_IER_FMPIE0 |
-		    CAN_IER_FMPIE1 | CAN_IER_BOFIE;
+		    CAN_IER_FMPIE1 | CAN_IER_BOFIE | CAN_IER_EWGIE | CAN_IER_EPVIE;
 }
 
 #if defined(CONFIG_NET_SOCKETS_CAN)
