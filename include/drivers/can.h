@@ -99,6 +99,24 @@ enum can_mode {
 };
 
 /*
+ * CAN operational and error states
+ */
+enum can_state {
+	/* RX/TX error count < 96 */
+	CAN_STATE_ERROR_ACTIVE = 0,
+	/* RX/TX error count < 128 */
+	CAN_STATE_ERROR_WARNING,
+	/* RX/TX error count < 256 */
+	CAN_STATE_ERROR_PASSIVE,
+	/* RX/TX error count > 255 */
+	CAN_STATE_BUS_OFF,
+	/* Device is stopped */
+	CAN_STATE_STOPPED,
+	/* Device is sleeping */
+	CAN_STATE_SLEEPING
+};
+
+/*
  * Controller Area Network Identifier structure for Linux compatibility.
  *
  * The fields in this type are:
@@ -230,6 +248,16 @@ typedef void (*can_tx_callback_t)(u32_t error_flags, void *arg);
  * @param arg argument that was passed when the filter was attached
  */
 typedef void (*can_rx_callback_t)(struct zcan_frame *msg, void *arg);
+
+/**
+ * @typedef can_state_changed_callback_t
+ * @brief Define the application callback handler function signature
+ *        for receiving state changes.
+ *
+ * @param state new state
+ * @param arg argument that was passed when registered
+ */
+typedef void (*can_state_changed_callback_t)(enum can_state state, void *arg);
 
 typedef int (*can_configure_t)(struct device *dev, enum can_mode mode,
 				u32_t bitrate);

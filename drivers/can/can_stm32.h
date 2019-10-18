@@ -65,6 +65,10 @@ struct can_stm32_data {
 	u64_t filter_usage;
 	can_rx_callback_t rx_cb[CONFIG_CAN_MAX_FILTER];
 	void *cb_arg[CONFIG_CAN_MAX_FILTER];
+
+	enum can_state state;
+	can_state_changed_callback_t state_cb;
+	void *state_cb_arg;
 };
 
 struct can_stm32_config {

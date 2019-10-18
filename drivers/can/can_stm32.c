@@ -44,6 +44,7 @@ static void can_stm32_get_msg_fifo(CAN_FIFOMailBox_TypeDef *mbox,
 		msg->ext_id = mbox->RIR >> CAN_RI0R_EXID_Pos;
 		msg->id_type = CAN_EXTENDED_IDENTIFIER;
 	} else {
+		msg->ext_id = 0;
 		msg->std_id =  mbox->RIR >> CAN_RI0R_STID_Pos;
 		msg->id_type = CAN_STANDARD_IDENTIFIER;
 	}
@@ -972,13 +973,22 @@ static void config_can_1_irq(CAN_TypeDef *can)
 
 #include "socket_can_generic.h"
 
+static void socket_can_state_changed_1(enum can_state state, void *arg)
+{
+	socket_can_change_state((struct socket_can_context *)arg, state, 0);
+}
+
 static int socket_can_init_1(struct device *dev)
 {
 	struct device *can_dev = DEVICE_GET(can_stm32_1);
 	struct socket_can_context *socket_context = dev->driver_data;
+	struct can_stm32_data *data = DEV_DATA(can_dev);
 
 	LOG_DBG("Init socket CAN device %p (%s) for dev %p (%s)",
 		dev, dev->config->name, can_dev, can_dev->config->name);
+
+	data->state_cb_arg = socket_context;
+	data->state_cb = socket_can_state_changed_1;
 
 	socket_context->can_dev = can_dev;
 	socket_context->msgq = &socket_can_msgq;
