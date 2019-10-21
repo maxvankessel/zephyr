@@ -164,7 +164,10 @@ static const u32_t table_samp_time[] = {
 #endif
 
 /* 16 external channels. */
-#define STM32_CHANNEL_COUNT		16
+#define STM32_EXTERNAL_CHANNEL_COUNT		16
+
+/* 3 internal channels. */
+#define STM32_INTERNAL_CHANNEL_COUNT		3
 
 struct adc_stm32_data {
 	struct adc_context ctx;
@@ -181,6 +184,7 @@ struct adc_stm32_data {
 
 struct adc_stm32_cfg {
 	ADC_TypeDef *base;
+	ADC_Common_TypeDef *common;
 
 	void (*irq_cfg_func)(void);
 
@@ -233,7 +237,7 @@ static int start_read(struct device *dev, const struct adc_sequence *sequence)
 	struct adc_stm32_data *data = dev->driver_data;
 	ADC_TypeDef *adc = (ADC_TypeDef *)config->base;
 	u8_t resolution;
-	int err;
+	int err = -EINVAL;
 
 	switch (sequence->resolution) {
 #if !defined(CONFIG_SOC_SERIES_STM32F1X)
@@ -256,7 +260,7 @@ static int start_read(struct device *dev, const struct adc_sequence *sequence)
 #endif
 	default:
 		LOG_ERR("Invalid resolution");
-		return -EINVAL;
+		return err;
 	}
 
 	u32_t channels = sequence->channels;
@@ -266,6 +270,33 @@ static int start_read(struct device *dev, const struct adc_sequence *sequence)
 
 	index = find_lsb_set(channels) - 1;
 	u32_t channel = __LL_ADC_DECIMAL_NB_TO_CHANNEL(index);
+
+	if(__LL_ADC_IS_CHANNEL_INTERNAL(channel)) {
+		u32_t internal_path = LL_ADC_PATH_INTERNAL_NONE;
+		if(!__LL_ADC_IS_CHANNEL_INTERNAL_AVAILABLE(cfg->base, channel)) {
+			LOG_ERR("Internal channel on available on this instance");
+			return err;
+		}
+
+		/* Enable internal path */
+		switch(channel) {
+			case LL_ADC_CHANNEL_VREFINT:
+				internal_path = LL_ADC_PATH_INTERNAL_VREFINT;
+				break;
+			case LL_ADC_CHANNEL_TEMPSENSOR:
+				internal_path = LL_ADC_PATH_INTERNAL_VREFINT;
+				break;
+			case LL_ADC_CHANNEL_VBAT:
+				internal_path = LL_ADC_PATH_INTERNAL_VREFINT;
+				break;
+			default:
+				internal_path = LL_ADC_PATH_INTERNAL_NONE;
+				break;
+		}
+
+		LL_ADC_SetCommonPathInternalCh(config->common, internal_path);
+	}
+
 #if defined(CONFIG_SOC_SERIES_STM32F0X) || \
 	defined(CONFIG_SOC_SERIES_STM32L0X)
 	LL_ADC_REG_SetSequencerChannels(adc, channel);
@@ -384,7 +415,7 @@ static int adc_stm32_check_acq_time(u16_t acq_time)
 	return -EINVAL;
 }
 
-static void adc_stm32_setup_speed(struct device *dev, u8_t id,
+static void adc_stm32_setup_speed(struct device *dev, u32_t chan,
 				  u8_t acq_time_index)
 {
 	struct adc_stm32_cfg *config =
@@ -395,9 +426,7 @@ static void adc_stm32_setup_speed(struct device *dev, u8_t id,
 	LL_ADC_SetSamplingTimeCommonChannels(adc,
 		table_samp_time[acq_time_index]);
 #else
-	LL_ADC_SetChannelSamplingTime(adc,
-		__LL_ADC_DECIMAL_NB_TO_CHANNEL(id),
-		table_samp_time[acq_time_index]);
+	LL_ADC_SetChannelSamplingTime(adc, chan, table_samp_time[acq_time_index]);
 #endif
 }
 
@@ -408,14 +437,20 @@ static int adc_stm32_channel_setup(struct device *dev,
 	struct adc_stm32_data *data = dev->driver_data;
 #endif
 	int acq_time_index;
+	u32_t channel = __LL_ADC_DECIMAL_NB_TO_CHANNEL(channel_cfg->channel_id);
 
-	if (channel_cfg->channel_id >= STM32_CHANNEL_COUNT) {
-		LOG_ERR("Channel %d is not valid", channel_cfg->channel_id);
-		return -EINVAL;
+	if (channel_cfg->channel_id >= STM32_EXTERNAL_CHANNEL_COUNT) {
+		uint8_t chan = STM32_EXTERNAL_CHANNEL_COUNT - channel_cfg->channel_id;
+
+		if ((chan >= STM32_INTERNAL_CHANNEL_COUNT) ||
+				!__LL_ADC_IS_CHANNEL_INTERNAL_AVAILABLE(cfg->base, channel)) {
+
+			LOG_ERR("Channel %d is not valid", channel_cfg->channel_id);
+			return -EINVAL;
+		}
 	}
 
-	acq_time_index = adc_stm32_check_acq_time(
-				channel_cfg->acquisition_time);
+	acq_time_index = adc_stm32_check_acq_time(channel_cfg->acquisition_time);
 	if (acq_time_index < 0) {
 		return acq_time_index;
 	}
@@ -445,8 +480,7 @@ static int adc_stm32_channel_setup(struct device *dev,
 		return -EINVAL;
 	}
 
-	adc_stm32_setup_speed(dev, channel_cfg->channel_id,
-				  acq_time_index);
+	adc_stm32_setup_speed(dev, channel, acq_time_index);
 
 	LOG_DBG("Channel setup succeeded!");
 
@@ -636,6 +670,7 @@ static void adc_stm32_cfg_func_##index(void);				\
 									\
 static const struct adc_stm32_cfg adc_stm32_cfg_##index = {		\
 	.base = (ADC_TypeDef *)DT_ADC_##index##_BASE_ADDRESS,		\
+	.common = __LL_ADC_COMMON_INSTANCE(DT_ADC_##index##_BASE_ADDRESS), \
 	.irq_cfg_func = adc_stm32_cfg_func_##index,			\
 	.pclken = {							\
 		.enr = DT_ADC_##index##_CLOCK_BITS,			\
